@@ -1,20 +1,33 @@
 "use client";
 
-import { useState, FormEvent } from "react";
+import { useState, useEffect, FormEvent } from "react";
+import type { EmbeddingModel } from "@/lib/types";
+import { getModels } from "@/lib/api";
 
 interface SearchBarProps {
-  onSearch: (query: string) => void;
+  onSearch: (query: string, model?: string) => void;
   isLoading: boolean;
 }
 
 export default function SearchBar({ onSearch, isLoading }: SearchBarProps) {
   const [query, setQuery] = useState("");
+  const [models, setModels] = useState<EmbeddingModel[]>([]);
+  const [selectedModel, setSelectedModel] = useState<string>("");
+
+  useEffect(() => {
+    getModels()
+      .then((data) => {
+        setModels(data.models);
+        setSelectedModel(data.default);
+      })
+      .catch(() => {});
+  }, []);
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
     const trimmed = query.trim();
     if (trimmed) {
-      onSearch(trimmed);
+      onSearch(trimmed, selectedModel || undefined);
       setQuery("");
     }
   };
@@ -45,9 +58,27 @@ export default function SearchBar({ onSearch, isLoading }: SearchBarProps) {
           {isLoading ? "Searching..." : "Discover"}
         </button>
       </form>
-      <p className="mt-2 text-xs text-gray-500">
-        Powered by AI semantic search with Qwen embeddings
-      </p>
+      <div className="mt-2 flex items-center gap-3 text-xs text-gray-500">
+        <span>Powered by AI semantic search</span>
+        {models.length > 1 && (
+          <>
+            <span className="text-gray-700">·</span>
+            <select
+              value={selectedModel}
+              onChange={(e) => setSelectedModel(e.target.value)}
+              className="bg-transparent text-gray-500 hover:text-gray-300 border-none outline-none cursor-pointer appearance-none"
+              style={{ backgroundImage: "none" }}
+            >
+              {models.map((m) => (
+                <option key={m.id} value={m.id} className="bg-gray-900 text-gray-300">
+                  {m.label}
+                </option>
+              ))}
+            </select>
+            <span className="text-gray-700">▾</span>
+          </>
+        )}
+      </div>
     </div>
   );
 }

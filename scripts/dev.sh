@@ -7,9 +7,9 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 cd "$PROJECT_DIR"
 
-# Generate test data if not exists
-if [ ! -f data/movies.arrow ]; then
-    echo "Generating test data..."
+# Generate embeddings if not exists
+if [ ! -f data/movies_minilm.arrow ]; then
+    echo "Generating embeddings (this may take a while on first run)..."
     python3 scripts/generate_test_data.py
 fi
 
@@ -23,10 +23,11 @@ if [ ! -f "$GRPC_DIR/service_grpc.py" ]; then
 fi
 
 echo "Starting recommendation service on :8001 (gRPC on :50051)..."
-ARROW_PATH="$PROJECT_DIR/data/movies.arrow" \
+DATA_DIR="$PROJECT_DIR/data" \
 EMBEDDING_SERVICE_URL=http://localhost:8000 \
 HTTP_PORT=8001 \
 GRPC_PORT=50051 \
+DEFAULT_MODEL=minilm \
 python3 -m streammind_rec.main &
 BACKEND_PID=$!
 

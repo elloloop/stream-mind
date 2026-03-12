@@ -1,11 +1,12 @@
-import type { Movie, Lane, SearchResponse } from "./types";
+import type { Movie, Lane, SearchResponse, ModelsResponse } from "./types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8001";
 
 export async function searchMovies(
   query: string,
   topK: number = 10,
-  watchedIds: number[] = []
+  watchedIds: number[] = [],
+  model?: string
 ): Promise<SearchResponse> {
   const res = await fetch(`${API_BASE}/api/search`, {
     method: "POST",
@@ -14,9 +15,16 @@ export async function searchMovies(
       query,
       top_k: topK,
       watched_ids: watchedIds,
+      model: model || undefined,
     }),
   });
   if (!res.ok) throw new Error(`Search failed: ${res.status}`);
+  return res.json();
+}
+
+export async function getModels(): Promise<ModelsResponse> {
+  const res = await fetch(`${API_BASE}/api/models`);
+  if (!res.ok) throw new Error(`Models failed: ${res.status}`);
   return res.json();
 }
 

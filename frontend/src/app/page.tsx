@@ -40,12 +40,12 @@ export default function Home() {
     setCustomLanes(getCustomLanes());
   }, [loadData, refreshKey]);
 
-  const handleSearch = async (query: string) => {
+  const handleSearch = async (query: string, model?: string) => {
     setIsSearching(true);
     setError(null);
     try {
       const watchedIds = getWatchedIds();
-      const result = await searchMovies(query, 10, watchedIds);
+      const result = await searchMovies(query, 10, watchedIds, model);
 
       const newLane: CustomLane = {
         id: `lane_${Date.now()}`,

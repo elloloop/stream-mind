@@ -5,7 +5,8 @@ Starts both:
 1. A gRPC server (port 50051) for mobile/native clients
 2. A FastAPI HTTP server (port 8001) with REST endpoints mirroring the gRPC API
 
-Loads movie embeddings from Arrow files at startup.
+Loads movie embeddings from Arrow files at startup. Supports multiple
+embedding models (loaded side-by-side) for A/B testing.
 """
 
 import asyncio
@@ -21,7 +22,7 @@ from contextlib import asynccontextmanager
 from pydantic import BaseModel
 
 from streammind_rec.infra.loader import load_movie_state
-from streammind_rec.search.pipeline import SearchPipeline
+from streammind_rec.search.pipeline import SearchPipeline, MODEL_CONFIGS
 from streammind_rec.search.state.movie_state import MovieState, MovieFeatures
 from streammind_rec.api.grpc.server import start_grpc_server
 
@@ -33,7 +34,11 @@ logger = logging.getLogger(__name__)
 
 # ── Config ──────────────────────────────────────────────────────────────
 
-ARROW_PATH = os.environ.get("ARROW_PATH", "/data/movies.arrow")
+# Base directory for Arrow files (contains movies_minilm.arrow, movies_bge.arrow)
+DATA_DIR = os.environ.get("DATA_DIR", "/data")
+# Legacy single-file path (fallback)
+ARROW_PATH = os.environ.get("ARROW_PATH", "")
+
 S3_BUCKET = os.environ.get("S3_BUCKET", "")
 S3_KEY = os.environ.get("S3_KEY", "")
 S3_ENDPOINT = os.environ.get("S3_ENDPOINT", "")
@@ -43,11 +48,13 @@ EMBEDDING_SERVICE_URL = os.environ.get(
 )
 GRPC_PORT = int(os.environ.get("GRPC_PORT", "50051"))
 HTTP_PORT = int(os.environ.get("HTTP_PORT", "8001"))
+DEFAULT_MODEL = os.environ.get("DEFAULT_MODEL", "minilm")
 
 # ── Globals ─────────────────────────────────────────────────────────────
 
-movie_state: MovieState = MovieState()
 search_pipeline: SearchPipeline | None = None
+# Primary state used for non-search endpoints (lanes, hero, etc.)
+primary_state: MovieState = MovieState()
 grpc_server = None
 
 
@@ -71,14 +78,15 @@ class SearchRequest(BaseModel):
     query: str
     top_k: int = 10
     watched_ids: list[int] = []
+    model: Optional[str] = None
 
 
 class SearchResponse(BaseModel):
     movies: list[MovieResponse]
     query: str
+    model: str
     embedding_time_ms: float
     knn_time_ms: float
-    rerank_time_ms: float
     total_time_ms: float
 
 
@@ -93,6 +101,11 @@ class StandardLanesResponse(BaseModel):
 
 class HeroResponse(BaseModel):
     movie: MovieResponse
+
+
+class ModelsResponse(BaseModel):
+    models: list[dict]
+    default: str
 
 
 def _to_movie_response(f: MovieFeatures, score: float = 0.0) -> MovieResponse:
@@ -115,24 +128,46 @@ def _to_movie_response(f: MovieFeatures, score: float = 0.0) -> MovieResponse:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global movie_state, search_pipeline, grpc_server
+    global primary_state, search_pipeline, grpc_server
 
-    logger.info("Loading movie data...")
-    movie_state = await load_movie_state(
-        arrow_path=ARROW_PATH,
-        s3_bucket=S3_BUCKET or None,
-        s3_key=S3_KEY or None,
-        s3_endpoint=S3_ENDPOINT or None,
-    )
-    logger.info(f"Loaded {movie_state.movie_count} movies (dim={movie_state.embedding_dim})")
+    states: dict[str, MovieState] = {}
+
+    # Try loading per-model Arrow files from DATA_DIR
+    for model_key in MODEL_CONFIGS:
+        arrow_file = os.path.join(DATA_DIR, f"movies_{model_key}.arrow")
+        if os.path.exists(arrow_file):
+            logger.info(f"Loading {model_key} embeddings from {arrow_file}...")
+            state = await load_movie_state(arrow_path=arrow_file)
+            states[model_key] = state
+            logger.info(
+                f"  {model_key}: {state.movie_count} movies (dim={state.embedding_dim})"
+            )
+
+    # Fallback: load single ARROW_PATH as the default model
+    if not states and ARROW_PATH and os.path.exists(ARROW_PATH):
+        logger.info(f"Loading single Arrow file: {ARROW_PATH}")
+        state = await load_movie_state(
+            arrow_path=ARROW_PATH,
+            s3_bucket=S3_BUCKET or None,
+            s3_key=S3_KEY or None,
+            s3_endpoint=S3_ENDPOINT or None,
+        )
+        states[DEFAULT_MODEL] = state
+
+    if not states:
+        logger.error("No Arrow files found! Check DATA_DIR or ARROW_PATH.")
+
+    # Use the default model's state for non-search endpoints (lanes, hero, etc.)
+    primary_state = states.get(DEFAULT_MODEL) or next(iter(states.values()), MovieState())
 
     search_pipeline = SearchPipeline(
-        state=movie_state,
+        states=states,
         embedding_service_url=EMBEDDING_SERVICE_URL,
+        default_model=DEFAULT_MODEL,
     )
 
     grpc_server = await start_grpc_server(
-        state=movie_state,
+        state=primary_state,
         pipeline=search_pipeline,
         port=GRPC_PORT,
     )
@@ -158,16 +193,43 @@ app.add_middleware(
 )
 
 
-# ── REST endpoints (mirror gRPC interface) ──────────────────────────────
+# ── REST endpoints ──────────────────────────────────────────────────────
 
 @app.get("/health")
 async def health():
+    models = {}
+    if search_pipeline:
+        for key in search_pipeline.available_models:
+            state = search_pipeline.get_state(key)
+            if state:
+                models[key] = {
+                    "movie_count": state.movie_count,
+                    "embedding_dim": state.embedding_dim,
+                }
     return {
         "status": "ok",
-        "movie_count": movie_state.movie_count,
-        "embeddings_loaded": movie_state.embeddings_loaded,
-        "embedding_dim": movie_state.embedding_dim,
+        "models": models,
+        "default_model": DEFAULT_MODEL,
     }
+
+
+@app.get("/api/models", response_model=ModelsResponse)
+async def get_models():
+    """List available embedding models for A/B testing."""
+    models = []
+    if search_pipeline:
+        for key in search_pipeline.available_models:
+            config = MODEL_CONFIGS.get(key, {})
+            state = search_pipeline.get_state(key)
+            models.append({
+                "id": key,
+                "label": config.get("label", key),
+                "dim": state.embedding_dim if state else 0,
+            })
+    return ModelsResponse(
+        models=models,
+        default=search_pipeline.default_model if search_pipeline else DEFAULT_MODEL,
+    )
 
 
 @app.post("/api/search", response_model=SearchResponse)
@@ -175,8 +237,8 @@ async def search_movies(request: SearchRequest):
     """AI-powered semantic search: user query -> ranked movies."""
     if not search_pipeline:
         return SearchResponse(
-            movies=[], query=request.query,
-            embedding_time_ms=0, knn_time_ms=0, rerank_time_ms=0, total_time_ms=0,
+            movies=[], query=request.query, model="",
+            embedding_time_ms=0, knn_time_ms=0, total_time_ms=0,
         )
 
     exclude = set(request.watched_ids) if request.watched_ids else None
@@ -185,6 +247,7 @@ async def search_movies(request: SearchRequest):
         query=request.query,
         top_k=request.top_k,
         exclude_ids=exclude,
+        model=request.model,
     )
 
     movies = [_to_movie_response(r.movie, r.score) for r in result.results]
@@ -192,9 +255,9 @@ async def search_movies(request: SearchRequest):
     return SearchResponse(
         movies=movies,
         query=request.query,
+        model=result.model,
         embedding_time_ms=result.embedding_time_ms,
         knn_time_ms=result.knn_time_ms,
-        rerank_time_ms=result.rerank_time_ms,
         total_time_ms=result.total_time_ms,
     )
 
@@ -210,19 +273,19 @@ async def get_standard_lanes(
 
     lanes = []
 
-    trending = movie_state.get_movies_by_sort("popularity", 20, exclude)
+    trending = primary_state.get_movies_by_sort("popularity", 20, exclude)
     lanes.append(LaneResponse(
         name="Trending Now",
         movies=[_to_movie_response(f) for f in trending],
     ))
 
-    top_rated = movie_state.get_movies_by_sort("vote_average", 20, exclude)
+    top_rated = primary_state.get_movies_by_sort("vote_average", 20, exclude)
     lanes.append(LaneResponse(
         name="Top Rated",
         movies=[_to_movie_response(f) for f in top_rated],
     ))
 
-    recent = movie_state.get_movies_by_sort("release_date", 20, exclude)
+    recent = primary_state.get_movies_by_sort("release_date", 20, exclude)
     lanes.append(LaneResponse(
         name="New Releases",
         movies=[_to_movie_response(f) for f in recent],
@@ -240,14 +303,12 @@ async def get_hero(
     if watched_ids:
         exclude = set(int(x) for x in watched_ids.split(",") if x.strip())
 
-    popular = movie_state.get_movies_by_sort("popularity", 10, exclude)
-    # Filter to movies with backdrop images
+    popular = primary_state.get_movies_by_sort("popularity", 10, exclude)
     with_backdrops = [f for f in popular if f.backdrop_path]
     if not with_backdrops:
         with_backdrops = popular
 
     if not with_backdrops:
-        # Fallback
         return HeroResponse(movie=MovieResponse(
             id=0, title="Welcome to StreamMind", overview="Discover movies with AI",
             poster_path="", backdrop_path="", vote_average=0, vote_count=0,
@@ -261,7 +322,7 @@ async def get_hero(
 @app.get("/api/movie/{movie_id}", response_model=MovieResponse)
 async def get_movie(movie_id: int):
     """Get a single movie's details."""
-    features = movie_state.get_features(movie_id)
+    features = primary_state.get_features(movie_id)
     if not features:
         from fastapi import HTTPException
         raise HTTPException(404, f"Movie {movie_id} not found")

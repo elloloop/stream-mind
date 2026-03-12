@@ -20,10 +20,21 @@ export interface Lane {
 export interface SearchResponse {
   movies: Movie[];
   query: string;
+  model: string;
   embedding_time_ms: number;
   knn_time_ms: number;
-  rerank_time_ms: number;
   total_time_ms: number;
+}
+
+export interface EmbeddingModel {
+  id: string;
+  label: string;
+  dim: number;
+}
+
+export interface ModelsResponse {
+  models: EmbeddingModel[];
+  default: string;
 }
 
 export interface CustomLane {

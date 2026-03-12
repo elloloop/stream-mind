@@ -91,7 +91,6 @@ class RecommendationServicer(RecommendationServiceBase):
             query=query,
             embedding_time_ms=result.embedding_time_ms,
             knn_time_ms=result.knn_time_ms,
-            rerank_time_ms=result.rerank_time_ms,
             total_time_ms=result.total_time_ms,
             request_id=request.request_id or "",
         )
