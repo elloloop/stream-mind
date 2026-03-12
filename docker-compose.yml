@@ -1,0 +1,56 @@
+services:
+  # ── GPU Embedding Service ──────────────────────────────────────────
+  embedding-service:
+    build:
+      context: .
+      dockerfile: services/embedding_service/Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - EMBEDDING_MODEL=Alibaba-NLP/gte-Qwen2-1.5B-instruct
+      - DEVICE=cpu  # Change to 'cuda' if GPU available
+      - MAX_LENGTH=512
+    volumes:
+      - model-cache:/root/.cache  # Cache model downloads
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s  # Model download takes time
+
+  # ── Recommendation Service (gRPC + REST) ───────────────────────────
+  recommendation-service:
+    build:
+      context: .
+      dockerfile: services/recommendation_service/Dockerfile
+    ports:
+      - "8001:8001"   # REST API (for frontend)
+      - "50051:50051"  # gRPC (for mobile clients)
+    environment:
+      - ARROW_PATH=/data/movies.arrow
+      - EMBEDDING_SERVICE_URL=http://embedding-service:8000
+      - GRPC_PORT=50051
+      - HTTP_PORT=8001
+    volumes:
+      - ./data:/data:ro
+    depends_on:
+      embedding-service:
+        condition: service_healthy
+
+  # ── Next.js Frontend ──────────────────────────────────────────────
+  frontend:
+    build:
+      context: frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:8001
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8001
+    depends_on:
+      - recommendation-service
+
+volumes:
+  model-cache:

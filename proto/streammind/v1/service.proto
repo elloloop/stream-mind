@@ -1,0 +1,83 @@
+syntax = "proto3";
+
+package streammind.v1;
+
+option go_package = "streammind/v1;streammindv1";
+
+// ─── Movie types ───────────────────────────────────────────────────────
+
+message Movie {
+  int32 id = 1;
+  string title = 2;
+  string overview = 3;
+  string poster_path = 4;
+  string backdrop_path = 5;
+  double vote_average = 6;
+  int32 vote_count = 7;
+  string release_date = 8;
+  repeated string genres = 9;
+  double popularity = 10;
+  double match_score = 11;  // cosine similarity or reranked score
+}
+
+// ─── Recommendation Service ────────────────────────────────────────────
+
+service RecommendationService {
+  // AI-powered semantic search: user query -> ranked movies
+  rpc SearchMovies(SearchMoviesRequest) returns (SearchMoviesResponse);
+
+  // Standard browsing lanes (trending, top rated, coming soon)
+  rpc GetStandardLanes(GetStandardLanesRequest) returns (GetStandardLanesResponse);
+
+  // Get a single movie's details
+  rpc GetMovie(GetMovieRequest) returns (GetMovieResponse);
+
+  // Health check
+  rpc Health(HealthRequest) returns (HealthResponse);
+}
+
+message SearchMoviesRequest {
+  string query = 1;
+  int32 top_k = 2;               // how many results (default 10)
+  repeated int32 watched_ids = 3; // IDs to exclude / down-weight
+  string request_id = 4;
+}
+
+message SearchMoviesResponse {
+  repeated Movie movies = 1;
+  string query = 2;
+  double embedding_time_ms = 3;
+  double knn_time_ms = 4;
+  double rerank_time_ms = 5;
+  double total_time_ms = 6;
+  string request_id = 7;
+}
+
+message GetStandardLanesRequest {
+  repeated int32 watched_ids = 1; // IDs to exclude
+}
+
+message Lane {
+  string name = 1;
+  repeated Movie movies = 2;
+}
+
+message GetStandardLanesResponse {
+  repeated Lane lanes = 1;
+}
+
+message GetMovieRequest {
+  int32 movie_id = 1;
+}
+
+message GetMovieResponse {
+  Movie movie = 1;
+}
+
+message HealthRequest {}
+
+message HealthResponse {
+  string status = 1;
+  int32 movie_count = 2;
+  bool embeddings_loaded = 3;
+}

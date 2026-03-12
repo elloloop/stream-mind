@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+
+# Node
+node_modules/
+.next/
+out/
+
+# Data
+data/*.arrow
+data/*.json
+
+# Environment
+.env
+.env.local
+*.env
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+docker-compose.override.yml
+
+# Model cache
+model-cache/
+
+# Generated proto stubs (regenerated from proto/)
+services/recommendation_service/src/streammind_rec/api/grpc/generated/
+
+# Playwright test artifacts
+frontend/e2e/test-results/
+frontend/e2e/screenshots/
+frontend/e2e/playwright-report/
