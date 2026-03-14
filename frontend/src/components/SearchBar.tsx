@@ -63,11 +63,11 @@ export default function SearchBar({ onSearch, isLoading }: SearchBarProps) {
         {models.length > 1 && (
           <>
             <span className="text-gray-700">·</span>
+            <span className="text-gray-500">Model:</span>
             <select
               value={selectedModel}
               onChange={(e) => setSelectedModel(e.target.value)}
-              className="bg-transparent text-gray-500 hover:text-gray-300 border-none outline-none cursor-pointer appearance-none"
-              style={{ backgroundImage: "none" }}
+              className="rounded border border-gray-700 bg-gray-800/60 px-2 py-0.5 text-xs text-gray-400 hover:text-gray-200 hover:border-gray-500 outline-none cursor-pointer transition-colors"
             >
               {models.map((m) => (
                 <option key={m.id} value={m.id} className="bg-gray-900 text-gray-300">
@@ -75,7 +75,6 @@ export default function SearchBar({ onSearch, isLoading }: SearchBarProps) {
                 </option>
               ))}
             </select>
-            <span className="text-gray-700">▾</span>
           </>
         )}
       </div>

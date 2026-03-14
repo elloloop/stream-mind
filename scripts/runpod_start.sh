@@ -28,7 +28,7 @@ bash generate_protos.sh
 cd /workspace/stream-mind
 
 # Generate embeddings for both models if not present
-if [ ! -f data/movies_minilm.arrow ] || [ ! -f data/movies_bge.arrow ]; then
+if [ ! -f data/movies_qwen.arrow ] || [ ! -f data/movies_bge.arrow ]; then
     echo "Generating embeddings for both models..."
     mkdir -p data
 

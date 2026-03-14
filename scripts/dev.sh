@@ -8,7 +8,7 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 cd "$PROJECT_DIR"
 
 # Generate embeddings if not exists
-if [ ! -f data/movies_minilm.arrow ]; then
+if [ ! -f data/movies_qwen.arrow ]; then
     echo "Generating embeddings (this may take a while on first run)..."
     python3 scripts/generate_test_data.py
 fi
@@ -27,7 +27,7 @@ DATA_DIR="$PROJECT_DIR/data" \
 EMBEDDING_SERVICE_URL=http://localhost:8000 \
 HTTP_PORT=8001 \
 GRPC_PORT=50051 \
-DEFAULT_MODEL=minilm \
+DEFAULT_MODEL=qwen \
 python3 -m streammind_rec.main &
 BACKEND_PID=$!
 

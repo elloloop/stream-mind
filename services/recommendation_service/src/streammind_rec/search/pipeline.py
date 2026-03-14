@@ -17,13 +17,15 @@ from streammind_rec.search.state.movie_state import MovieState, MovieFeatures
 logger = logging.getLogger(__name__)
 
 MODEL_CONFIGS = {
-    "minilm": {
-        "name": "all-MiniLM-L6-v2",
-        "label": "MiniLM (fast)",
+    "qwen": {
+        "name": "Qwen/Qwen3-Embedding-0.6B",
+        "label": "Qwen3 0.6B",
+        "query_prompt": "Instruct: Given a movie search query, retrieve relevant movies\nQuery: ",
     },
     "bge": {
         "name": "BAAI/bge-large-en-v1.5",
-        "label": "BGE-large (quality)",
+        "label": "BGE-large",
+        "query_prompt": None,
     },
 }
 
@@ -150,8 +152,12 @@ class SearchPipeline:
             self._local_models[model_key] = SentenceTransformer(model_name)
             logger.info(f"Fallback model {model_name} loaded")
 
+        query_prompt = MODEL_CONFIGS.get(model_key, {}).get("query_prompt")
         emb = self._local_models[model_key].encode(
-            query, normalize_embeddings=True, show_progress_bar=False,
+            query,
+            prompt=query_prompt,
+            normalize_embeddings=True,
+            show_progress_bar=False,
         )
         return emb.astype(np.float32)
 

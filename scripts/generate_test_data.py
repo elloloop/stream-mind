@@ -2,8 +2,11 @@
 Generate Arrow files from TMDB movie JSONL data with semantic embeddings.
 
 Produces one Arrow file per model for A/B testing:
-  - movies_minilm.arrow  (all-MiniLM-L6-v2, 384-dim, fast)
-  - movies_bge.arrow      (BAAI/bge-large-en-v1.5, 1024-dim, higher quality)
+  - movies_qwen.arrow  (Qwen/Qwen3-Embedding-0.6B, 1024-dim)
+  - movies_bge.arrow   (BAAI/bge-large-en-v1.5, 1024-dim)
+
+Document embedding text uses labeled fields so the model understands
+the role of each piece of metadata (plot vs cast vs genre etc.).
 """
 
 import json
@@ -21,41 +24,45 @@ DEFAULT_JSONL_PATH = os.path.expanduser("~/Downloads/tmdb_movies.jsonl")
 BATCH_SIZE = 256
 
 MODELS = {
-    "minilm": "all-MiniLM-L6-v2",
+    "qwen": "Qwen/Qwen3-Embedding-0.6B",
     "bge": "BAAI/bge-large-en-v1.5",
 }
 
 
 def build_embedding_text(raw: dict) -> str:
-    """Build a content-focused text representation of a movie for embedding.
+    """Build a labeled, structured text representation for embedding.
 
-    Overview and thematic metadata (genres, keywords) come first to anchor
-    the embedding in what the movie is about. Title and credits are appended
-    at the end so they inform but don't dominate the vector.
+    Uses explicit field labels (Plot:, Genres:, etc.) so the embedding model
+    understands the role of each piece of metadata. This enables accurate
+    retrieval for diverse query types:
+      - thematic:  "uplifting prison drama about hope"
+      - by person: "Christopher Nolan movies"
+      - by genre:  "sci-fi with time travel"
+      - by mood:   "dark psychological thriller"
     """
     parts = []
 
     overview = raw.get("overview", "")
     if overview:
-        parts.append(overview)
+        parts.append(f"Plot: {overview}")
 
     tagline = raw.get("tagline", "")
     if tagline:
-        parts.append(tagline)
+        parts.append(f"Tagline: {tagline}")
 
     genres = raw.get("genres", "")
     if genres:
-        parts.append(genres.replace("|", ", "))
+        parts.append(f"Genres: {genres.replace('|', ', ')}")
 
     keywords = raw.get("keywords", "")
     if keywords:
-        kws = [k.strip() for k in keywords.split("|") if k.strip()][:10]
+        kws = [k.strip() for k in keywords.split("|") if k.strip()][:15]
         if kws:
-            parts.append(", ".join(kws))
+            parts.append(f"Themes: {', '.join(kws)}")
 
     director = raw.get("director", "")
     if director:
-        parts.append(f"directed by {director}")
+        parts.append(f"Director: {director}")
 
     cast = raw.get("cast_top10", "")
     if cast:
@@ -65,13 +72,23 @@ def build_embedding_text(raw: dict) -> str:
             if name:
                 actors.append(name)
         if actors:
-            parts.append(f"starring {', '.join(actors)}")
+            parts.append(f"Cast: {', '.join(actors)}")
 
     title = raw.get("title", "")
+    year = (raw.get("release_date", "") or "")[:4]
     if title:
-        parts.append(title)
+        parts.append(f"Title: {title}" + (f" ({year})" if year else ""))
 
-    return ". ".join(parts)
+    lang = raw.get("original_language", "")
+    if lang and lang != "en":
+        spoken = raw.get("spoken_languages", "")
+        parts.append(f"Language: {spoken if spoken else lang}")
+
+    collection = raw.get("belongs_to_collection", "")
+    if collection:
+        parts.append(f"Collection: {collection}")
+
+    return "\n".join(parts)
 
 
 def load_movies(jsonl_path: str) -> tuple[list[dict], list[str]]:
@@ -169,6 +186,9 @@ def main():
     output_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
     os.makedirs(output_dir, exist_ok=True)
 
+    # Process in chunks to avoid tokenizing all texts at once (OOM on large datasets)
+    CHUNK_SIZE = 10000
+
     for key, model_name in models_to_run.items():
         print(f"\n{'='*60}")
         print(f"Model: {model_name} ({key})")
@@ -178,22 +198,35 @@ def main():
         embedding_dim = model.get_sentence_embedding_dimension()
         print(f"Loaded (dim={embedding_dim})")
 
+        n = len(texts)
+        all_embeddings = np.empty((n, embedding_dim), dtype=np.float32)
+
         start = time.perf_counter()
-        embeddings = model.encode(
-            texts,
-            batch_size=BATCH_SIZE,
-            show_progress_bar=True,
-            normalize_embeddings=True,
-        )
+        for chunk_start in range(0, n, CHUNK_SIZE):
+            chunk_end = min(chunk_start + CHUNK_SIZE, n)
+            chunk_texts = texts[chunk_start:chunk_end]
+
+            chunk_embs = model.encode(
+                chunk_texts,
+                batch_size=BATCH_SIZE,
+                show_progress_bar=True,
+                normalize_embeddings=True,
+            )
+            all_embeddings[chunk_start:chunk_end] = chunk_embs.astype(np.float32)
+
+            elapsed_so_far = time.perf_counter() - start
+            done = chunk_end
+            rate = done / elapsed_so_far
+            eta = (n - done) / rate if rate > 0 else 0
+            print(f"  [{done}/{n}] {rate:.0f} movies/sec, ETA {eta/60:.0f}min")
+
         elapsed = time.perf_counter() - start
-        print(f"Encoded in {elapsed:.1f}s ({len(texts)/elapsed:.0f} movies/sec)")
+        print(f"Encoded in {elapsed:.1f}s ({n/elapsed:.0f} movies/sec)")
 
-        embeddings = embeddings.astype(np.float32)
         output_path = os.path.join(output_dir, f"movies_{key}.arrow")
-        write_arrow(movies, embeddings, embedding_dim, output_path)
+        write_arrow(movies, all_embeddings, embedding_dim, output_path)
 
-        # Free model memory before loading next
-        del model, embeddings
+        del model, all_embeddings
 
     print(f"\nDone! Files in {output_dir}/")
 

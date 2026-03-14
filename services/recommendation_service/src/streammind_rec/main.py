@@ -48,7 +48,7 @@ EMBEDDING_SERVICE_URL = os.environ.get(
 )
 GRPC_PORT = int(os.environ.get("GRPC_PORT", "50051"))
 HTTP_PORT = int(os.environ.get("HTTP_PORT", "8001"))
-DEFAULT_MODEL = os.environ.get("DEFAULT_MODEL", "minilm")
+DEFAULT_MODEL = os.environ.get("DEFAULT_MODEL", "qwen")
 
 # ── Globals ─────────────────────────────────────────────────────────────
 

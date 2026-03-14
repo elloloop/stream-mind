@@ -15,6 +15,8 @@ out/
 # Data
 data/*.arrow
 data/*.json
+data/*.jsonl
+data/*.csv
 
 # Environment
 .env
