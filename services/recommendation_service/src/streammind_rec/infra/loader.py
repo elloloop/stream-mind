@@ -77,13 +77,12 @@ def arrow_table_to_state(table: pa.Table) -> MovieState:
 
     movie_ids = table.column("movie_id").to_pylist()
 
-    # Extract embeddings from the fixed_size_list column
+    # Extract embeddings — use the flat values buffer for speed
     embedding_col = table.column("embedding")
-    embeddings_list = []
-    for i in range(len(embedding_col)):
-        chunk = embedding_col[i].as_py()
-        embeddings_list.append(chunk)
-    embeddings = np.array(embeddings_list, dtype=np.float32)
+    # fixed_size_list stores values contiguously; flatten then reshape
+    flat = embedding_col.combine_chunks().values.to_numpy(zero_copy_only=False).astype(np.float32)
+    dim = embedding_col.type.list_size
+    embeddings = flat.reshape(-1, dim)
 
     # Extract features
     titles = table.column("title").to_pylist()
@@ -96,6 +95,28 @@ def arrow_table_to_state(table: pa.Table) -> MovieState:
     genres_raw = table.column("genres").to_pylist()
     popularities = table.column("popularity").to_pylist()
 
+    # Optional columns (may not exist in older Arrow files)
+    original_languages = (
+        table.column("original_language").to_pylist()
+        if "original_language" in table.schema.names
+        else [""] * len(movie_ids)
+    )
+    imdb_ratings = (
+        table.column("imdb_rating").to_pylist()
+        if "imdb_rating" in table.schema.names
+        else [0.0] * len(movie_ids)
+    )
+    cast_raw = (
+        table.column("cast").to_pylist()
+        if "cast" in table.schema.names
+        else [""] * len(movie_ids)
+    )
+    directors = (
+        table.column("director").to_pylist()
+        if "director" in table.schema.names
+        else [""] * len(movie_ids)
+    )
+
     features_list = []
     for i in range(len(movie_ids)):
         # Parse genres (stored as JSON string)
@@ -105,6 +126,11 @@ def arrow_table_to_state(table: pa.Table) -> MovieState:
                 genres = json.loads(genres_raw[i]) if isinstance(genres_raw[i], str) else genres_raw[i]
             except (json.JSONDecodeError, TypeError):
                 genres = []
+
+        # Parse cast (pipe-separated actor names)
+        cast = []
+        if cast_raw[i]:
+            cast = [name.strip() for name in cast_raw[i].split("|") if name.strip()]
 
         features_list.append(
             MovieFeatures(
@@ -118,6 +144,10 @@ def arrow_table_to_state(table: pa.Table) -> MovieState:
                 release_date=release_dates[i] or "",
                 genres=genres,
                 popularity=float(popularities[i] or 0),
+                original_language=original_languages[i] or "",
+                imdb_rating=float(imdb_ratings[i] or 0),
+                cast=cast,
+                director=directors[i] or "",
             )
         )
 
