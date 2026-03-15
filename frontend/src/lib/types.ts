@@ -10,6 +10,9 @@ export interface Movie {
   genres: string[];
   popularity: number;
   match_score: number;
+  cast?: string[];
+  director?: string;
+  imdb_rating?: number;
 }
 
 export interface Lane {
@@ -17,24 +20,23 @@ export interface Lane {
   movies: Movie[];
 }
 
-export interface SearchResponse {
-  movies: Movie[];
-  query: string;
-  model: string;
-  embedding_time_ms: number;
-  knn_time_ms: number;
+export interface SearchInsights {
+  search_text: string;
+  filters_applied: string;
   total_time_ms: number;
 }
 
-export interface EmbeddingModel {
-  id: string;
-  label: string;
-  dim: number;
-}
-
-export interface ModelsResponse {
-  models: EmbeddingModel[];
-  default: string;
+export interface SearchResponse {
+  movies: Movie[];
+  query: string;
+  rewritten_query: string;
+  search_text: string;
+  filters_applied: string;
+  model: string;
+  rewrite_time_ms: number;
+  embedding_time_ms: number;
+  knn_time_ms: number;
+  total_time_ms: number;
 }
 
 export interface CustomLane {
@@ -42,4 +44,18 @@ export interface CustomLane {
   query: string;
   movies: Movie[];
   created_at: number;
+  insights?: SearchInsights;
+}
+
+export interface DismissReason {
+  reason: "seen" | "not_interested" | "not_in_mood" | "bad_suggestion";
+  timestamp: number;
+}
+
+export interface DismissedMovies {
+  [id: number]: DismissReason;
+}
+
+export interface Ratings {
+  [id: number]: "up" | "down";
 }

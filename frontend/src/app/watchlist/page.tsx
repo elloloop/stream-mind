@@ -2,20 +2,20 @@
 
 import { useState, useEffect } from "react";
 import { Movie } from "@/lib/types";
-import { getWatchHistory } from "@/lib/storage";
+import { getWatchlistMovies } from "@/lib/storage";
 import { ToastProvider, useToast } from "@/components/Toast";
 import Navbar from "@/components/Navbar";
 import BottomNav from "@/components/BottomNav";
 import MovieCard from "@/components/MovieCard";
 import MovieDetails from "@/components/MovieDetails";
 
-function HistoryContent() {
+function WatchlistContent() {
   const [movies, setMovies] = useState<Movie[]>([]);
   const [selectedMovie, setSelectedMovie] = useState<Movie | null>(null);
   const { toast } = useToast();
 
   const reload = () => {
-    setMovies(getWatchHistory());
+    setMovies(getWatchlistMovies());
   };
 
   useEffect(() => {
@@ -28,11 +28,11 @@ function HistoryContent() {
       const year = m.release_date?.slice(0, 4);
       return `${m.title}${year ? ` (${year})` : ""} · ${m.vote_average?.toFixed(1)}`;
     });
-    const text = `My StreamMind History\n\n${lines.join("\n")}${movies.length > 10 ? `\n...and ${movies.length - 10} more` : ""}`;
+    const text = `My StreamMind Watchlist\n\n${lines.join("\n")}${movies.length > 10 ? `\n...and ${movies.length - 10} more` : ""}`;
 
     if (navigator.share) {
       try {
-        await navigator.share({ title: "My StreamMind History", text });
+        await navigator.share({ title: "My StreamMind Watchlist", text });
         return;
       } catch {}
     }
@@ -50,7 +50,7 @@ function HistoryContent() {
 
       <div className="px-6 md:px-16 pt-6 md:pt-24 pb-8">
         <div className="flex items-center justify-between mb-2">
-          <h1 className="text-2xl md:text-3xl font-bold text-white">Watch History</h1>
+          <h1 className="text-2xl md:text-3xl font-bold text-white">Watchlist</h1>
           {movies.length > 0 && (
             <button
               onClick={handleShareList}
@@ -64,16 +64,16 @@ function HistoryContent() {
           )}
         </div>
         <p className="text-gray-400 text-sm mb-8">
-          {movies.length} movie{movies.length !== 1 ? "s" : ""} watched
+          {movies.length} movie{movies.length !== 1 ? "s" : ""} saved
         </p>
 
         {movies.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 text-gray-500">
             <svg className="h-16 w-16 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={0.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+              <path strokeLinecap="round" strokeLinejoin="round" d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0111.186 0z" />
             </svg>
-            <p className="text-lg">No movies watched yet</p>
-            <p className="text-sm mt-1 text-gray-600">Mark movies as watched to see them here</p>
+            <p className="text-lg">No movies in your watchlist</p>
+            <p className="text-sm mt-1 text-gray-600">Save movies to watch later</p>
           </div>
         ) : (
           <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7 gap-3 md:gap-4">
@@ -103,10 +103,10 @@ function HistoryContent() {
   );
 }
 
-export default function HistoryPage() {
+export default function WatchlistPage() {
   return (
     <ToastProvider>
-      <HistoryContent />
+      <WatchlistContent />
     </ToastProvider>
   );
 }

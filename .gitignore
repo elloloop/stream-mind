@@ -45,3 +45,4 @@ services/recommendation_service/src/streammind_rec/api/grpc/generated/
 frontend/e2e/test-results/
 frontend/e2e/screenshots/
 frontend/e2e/playwright-report/
+terraform.tfvars

@@ -1,13 +1,18 @@
 @import "tailwindcss";
 
 :root {
-  --background: #141414;
+  --background: #0c0c0c;
   --foreground: #ffffff;
+  --surface: #141414;
+  --surface-light: #1a1a1a;
+  --accent: #ffeb3b;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
+  overscroll-behavior: contain;
+  -webkit-tap-highlight-color: transparent;
 }
 
 /* Hide scrollbar for lane horizontal scrolling */
@@ -17,4 +22,118 @@ body {
 }
 .scrollbar-hide::-webkit-scrollbar {
   display: none;
+}
+
+/* Safe area padding */
+.safe-top {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+.safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* Animations */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slideUp {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+
+@keyframes slideDown {
+  from { transform: translateY(0); }
+  to { transform: translateY(100%); }
+}
+
+@keyframes fadeInScale {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes slideInRight {
+  from { opacity: 0; transform: translateX(20px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes toastIn {
+  from { opacity: 0; transform: translateY(16px) scale(0.95); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes toastOut {
+  from { opacity: 1; transform: translateY(0) scale(1); }
+  to { opacity: 0; transform: translateY(16px) scale(0.9); }
+}
+
+.animate-fadeIn {
+  animation: fadeIn 0.4s ease-out both;
+}
+
+.animate-slideUp {
+  animation: slideUp 0.35s cubic-bezier(0.32, 0.72, 0, 1) both;
+}
+
+.animate-fadeInScale {
+  animation: fadeInScale 0.3s ease-out both;
+}
+
+.animate-toastIn {
+  animation: toastIn 0.3s ease-out both;
+}
+
+.animate-toastOut {
+  animation: toastOut 0.2s ease-in both;
+}
+
+/* Stagger animation for search results */
+.stagger-fade > * {
+  animation: slideInRight 0.3s ease-out both;
+}
+.stagger-fade > *:nth-child(1) { animation-delay: 0ms; }
+.stagger-fade > *:nth-child(2) { animation-delay: 50ms; }
+.stagger-fade > *:nth-child(3) { animation-delay: 100ms; }
+.stagger-fade > *:nth-child(4) { animation-delay: 150ms; }
+.stagger-fade > *:nth-child(5) { animation-delay: 200ms; }
+.stagger-fade > *:nth-child(6) { animation-delay: 250ms; }
+.stagger-fade > *:nth-child(7) { animation-delay: 300ms; }
+.stagger-fade > *:nth-child(8) { animation-delay: 350ms; }
+.stagger-fade > *:nth-child(9) { animation-delay: 400ms; }
+.stagger-fade > *:nth-child(10) { animation-delay: 450ms; }
+
+/* Scroll snap for lanes */
+.snap-lane {
+  scroll-snap-type: x mandatory;
+}
+.snap-lane > * {
+  scroll-snap-align: start;
+}
+
+/* Momentum scrolling on iOS */
+.momentum-scroll {
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Press effect for cards */
+.press-scale:active {
+  transform: scale(0.97);
+  transition: transform 0.1s ease;
+}
+
+/* Bottom sheet drag handle */
+.drag-handle {
+  width: 36px;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.2);
+  margin: 8px auto 0;
+}
+
+/* PWA standalone mode adjustments */
+@media all and (display-mode: standalone) {
+  body {
+    padding-top: env(safe-area-inset-top, 0px);
+  }
 }

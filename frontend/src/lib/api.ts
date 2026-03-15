@@ -1,4 +1,4 @@
-import type { Movie, Lane, SearchResponse, ModelsResponse } from "./types";
+import type { Movie, Lane, SearchResponse } from "./types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8001";
 
@@ -6,7 +6,7 @@ export async function searchMovies(
   query: string,
   topK: number = 10,
   watchedIds: number[] = [],
-  model?: string
+  dismissedIds: number[] = [],
 ): Promise<SearchResponse> {
   const res = await fetch(`${API_BASE}/api/search`, {
     method: "POST",
@@ -14,25 +14,20 @@ export async function searchMovies(
     body: JSON.stringify({
       query,
       top_k: topK,
-      watched_ids: watchedIds,
-      model: model || undefined,
+      watched_ids: [...watchedIds, ...dismissedIds],
     }),
   });
   if (!res.ok) throw new Error(`Search failed: ${res.status}`);
   return res.json();
 }
 
-export async function getModels(): Promise<ModelsResponse> {
-  const res = await fetch(`${API_BASE}/api/models`);
-  if (!res.ok) throw new Error(`Models failed: ${res.status}`);
-  return res.json();
-}
-
 export async function getStandardLanes(
-  watchedIds: number[] = []
+  watchedIds: number[] = [],
+  dismissedIds: number[] = [],
 ): Promise<Lane[]> {
-  const params = watchedIds.length
-    ? `?watched_ids=${watchedIds.join(",")}`
+  const allExcluded = [...watchedIds, ...dismissedIds];
+  const params = allExcluded.length
+    ? `?watched_ids=${allExcluded.join(",")}`
     : "";
   const res = await fetch(`${API_BASE}/api/lanes${params}`);
   if (!res.ok) throw new Error(`Lanes failed: ${res.status}`);
@@ -41,10 +36,12 @@ export async function getStandardLanes(
 }
 
 export async function getHeroMovie(
-  watchedIds: number[] = []
+  watchedIds: number[] = [],
+  dismissedIds: number[] = [],
 ): Promise<Movie> {
-  const params = watchedIds.length
-    ? `?watched_ids=${watchedIds.join(",")}`
+  const allExcluded = [...watchedIds, ...dismissedIds];
+  const params = allExcluded.length
+    ? `?watched_ids=${allExcluded.join(",")}`
     : "";
   const res = await fetch(`${API_BASE}/api/hero${params}`);
   if (!res.ok) throw new Error(`Hero failed: ${res.status}`);
@@ -56,6 +53,31 @@ export async function getMovie(movieId: number): Promise<Movie> {
   const res = await fetch(`${API_BASE}/api/movie/${movieId}`);
   if (!res.ok) throw new Error(`Movie failed: ${res.status}`);
   return res.json();
+}
+
+export async function getSimilarMovies(movieId: number): Promise<Movie[]> {
+  const res = await fetch(`${API_BASE}/api/similar/${movieId}`);
+  if (!res.ok) throw new Error(`Similar failed: ${res.status}`);
+  const data = await res.json();
+  return data.movies;
+}
+
+export async function getForYouMovies(
+  likedIds: number[],
+  watchedIds: number[] = [],
+  dismissedIds: number[] = [],
+): Promise<Movie[]> {
+  const res = await fetch(`${API_BASE}/api/for-you`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      liked_ids: likedIds,
+      exclude_ids: [...watchedIds, ...dismissedIds, ...likedIds],
+    }),
+  });
+  if (!res.ok) throw new Error(`For You failed: ${res.status}`);
+  const data = await res.json();
+  return data.movies;
 }
 
 export function tmdbImageUrl(

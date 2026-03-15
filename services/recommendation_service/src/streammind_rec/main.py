@@ -15,14 +15,15 @@ import os
 import random
 from typing import Optional
 
+import numpy as np
 import uvicorn
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from pydantic import BaseModel
 
 from streammind_rec.infra.loader import load_movie_state
-from streammind_rec.search.pipeline import SearchPipeline, MODEL_CONFIGS
+from streammind_rec.search.pipeline import SearchPipeline
 from streammind_rec.search.state.movie_state import MovieState, MovieFeatures
 from streammind_rec.api.grpc.server import start_grpc_server
 
@@ -72,22 +73,28 @@ class MovieResponse(BaseModel):
     genres: list[str]
     popularity: float
     match_score: float = 0.0
+    cast: list[str] = []
+    director: str = ""
+    imdb_rating: float = 0.0
 
 
 class SearchRequest(BaseModel):
     query: str
     top_k: int = 10
     watched_ids: list[int] = []
-    model: Optional[str] = None
 
 
 class SearchResponse(BaseModel):
     movies: list[MovieResponse]
     query: str
+    rewritten_query: str = ""
+    search_text: str = ""
+    filters_applied: str = ""
     model: str
-    embedding_time_ms: float
-    knn_time_ms: float
-    total_time_ms: float
+    rewrite_time_ms: float = 0.0
+    embedding_time_ms: float = 0.0
+    knn_time_ms: float = 0.0
+    total_time_ms: float = 0.0
 
 
 class LaneResponse(BaseModel):
@@ -103,9 +110,17 @@ class HeroResponse(BaseModel):
     movie: MovieResponse
 
 
-class ModelsResponse(BaseModel):
-    models: list[dict]
-    default: str
+class SimilarResponse(BaseModel):
+    movies: list[MovieResponse]
+
+
+class ForYouRequest(BaseModel):
+    liked_ids: list[int]
+    exclude_ids: list[int] = []
+
+
+class ForYouResponse(BaseModel):
+    movies: list[MovieResponse]
 
 
 def _to_movie_response(f: MovieFeatures, score: float = 0.0) -> MovieResponse:
@@ -121,6 +136,9 @@ def _to_movie_response(f: MovieFeatures, score: float = 0.0) -> MovieResponse:
         genres=f.genres,
         popularity=f.popularity,
         match_score=score,
+        cast=f.cast,
+        director=f.director,
+        imdb_rating=f.imdb_rating,
     )
 
 
@@ -130,40 +148,26 @@ def _to_movie_response(f: MovieFeatures, score: float = 0.0) -> MovieResponse:
 async def lifespan(app: FastAPI):
     global primary_state, search_pipeline, grpc_server
 
-    states: dict[str, MovieState] = {}
+    # Pick Arrow file based on backend mode
+    backend_mode = os.environ.get("BACKEND_MODE", "hybrid")
+    if backend_mode == "gemini":
+        arrow_file = os.path.join(DATA_DIR, "movies_gemini.arrow")
+    else:
+        # local and hybrid both use Qwen embeddings
+        arrow_file = os.path.join(DATA_DIR, "movies_qwen.arrow")
+    if not os.path.exists(arrow_file) and ARROW_PATH:
+        arrow_file = ARROW_PATH
 
-    # Try loading per-model Arrow files from DATA_DIR
-    for model_key in MODEL_CONFIGS:
-        arrow_file = os.path.join(DATA_DIR, f"movies_{model_key}.arrow")
-        if os.path.exists(arrow_file):
-            logger.info(f"Loading {model_key} embeddings from {arrow_file}...")
-            state = await load_movie_state(arrow_path=arrow_file)
-            states[model_key] = state
-            logger.info(
-                f"  {model_key}: {state.movie_count} movies (dim={state.embedding_dim})"
-            )
-
-    # Fallback: load single ARROW_PATH as the default model
-    if not states and ARROW_PATH and os.path.exists(ARROW_PATH):
-        logger.info(f"Loading single Arrow file: {ARROW_PATH}")
-        state = await load_movie_state(
-            arrow_path=ARROW_PATH,
-            s3_bucket=S3_BUCKET or None,
-            s3_key=S3_KEY or None,
-            s3_endpoint=S3_ENDPOINT or None,
-        )
-        states[DEFAULT_MODEL] = state
-
-    if not states:
-        logger.error("No Arrow files found! Check DATA_DIR or ARROW_PATH.")
-
-    # Use the default model's state for non-search endpoints (lanes, hero, etc.)
-    primary_state = states.get(DEFAULT_MODEL) or next(iter(states.values()), MovieState())
+    if os.path.exists(arrow_file):
+        logger.info(f"Loading embeddings from {arrow_file}...")
+        primary_state = await load_movie_state(arrow_path=arrow_file)
+        logger.info(f"  {primary_state.movie_count} movies (dim={primary_state.embedding_dim})")
+    else:
+        logger.error("No Arrow file found! Check DATA_DIR or ARROW_PATH.")
 
     search_pipeline = SearchPipeline(
-        states=states,
+        state=primary_state,
         embedding_service_url=EMBEDDING_SERVICE_URL,
-        default_model=DEFAULT_MODEL,
     )
 
     grpc_server = await start_grpc_server(
@@ -197,44 +201,16 @@ app.add_middleware(
 
 @app.get("/health")
 async def health():
-    models = {}
-    if search_pipeline:
-        for key in search_pipeline.available_models:
-            state = search_pipeline.get_state(key)
-            if state:
-                models[key] = {
-                    "movie_count": state.movie_count,
-                    "embedding_dim": state.embedding_dim,
-                }
     return {
         "status": "ok",
-        "models": models,
-        "default_model": DEFAULT_MODEL,
+        "movie_count": primary_state.movie_count,
+        "embedding_dim": primary_state.embedding_dim,
     }
-
-
-@app.get("/api/models", response_model=ModelsResponse)
-async def get_models():
-    """List available embedding models for A/B testing."""
-    models = []
-    if search_pipeline:
-        for key in search_pipeline.available_models:
-            config = MODEL_CONFIGS.get(key, {})
-            state = search_pipeline.get_state(key)
-            models.append({
-                "id": key,
-                "label": config.get("label", key),
-                "dim": state.embedding_dim if state else 0,
-            })
-    return ModelsResponse(
-        models=models,
-        default=search_pipeline.default_model if search_pipeline else DEFAULT_MODEL,
-    )
 
 
 @app.post("/api/search", response_model=SearchResponse)
 async def search_movies(request: SearchRequest):
-    """AI-powered semantic search: user query -> ranked movies."""
+    """AI-powered semantic search: user query -> LLM rewrite -> embed -> ranked movies."""
     if not search_pipeline:
         return SearchResponse(
             movies=[], query=request.query, model="",
@@ -247,15 +223,21 @@ async def search_movies(request: SearchRequest):
         query=request.query,
         top_k=request.top_k,
         exclude_ids=exclude,
-        model=request.model,
     )
 
-    movies = [_to_movie_response(r.movie, r.score) for r in result.results]
+    movies = [
+        _to_movie_response(r.movie, r.score) for r in result.results
+        if max(r.movie.vote_average, r.movie.imdb_rating) >= 5.0 or r.movie.vote_count < 10
+    ]
 
     return SearchResponse(
         movies=movies,
         query=request.query,
+        rewritten_query=result.query_analysis,
+        search_text=result.search_text,
+        filters_applied=result.filters_applied,
         model=result.model,
+        rewrite_time_ms=result.rewrite_time_ms,
         embedding_time_ms=result.embedding_time_ms,
         knn_time_ms=result.knn_time_ms,
         total_time_ms=result.total_time_ms,
@@ -273,19 +255,19 @@ async def get_standard_lanes(
 
     lanes = []
 
-    trending = primary_state.get_movies_by_sort("popularity", 20, exclude)
+    trending = primary_state.get_movies_by_sort("popularity", 20, exclude, language="en")
     lanes.append(LaneResponse(
         name="Trending Now",
         movies=[_to_movie_response(f) for f in trending],
     ))
 
-    top_rated = primary_state.get_movies_by_sort("vote_average", 20, exclude)
+    top_rated = primary_state.get_movies_by_sort("vote_average", 20, exclude, language="en")
     lanes.append(LaneResponse(
         name="Top Rated",
         movies=[_to_movie_response(f) for f in top_rated],
     ))
 
-    recent = primary_state.get_movies_by_sort("release_date", 20, exclude)
+    recent = primary_state.get_movies_by_sort("release_date", 20, exclude, language="en")
     lanes.append(LaneResponse(
         name="New Releases",
         movies=[_to_movie_response(f) for f in recent],
@@ -303,7 +285,7 @@ async def get_hero(
     if watched_ids:
         exclude = set(int(x) for x in watched_ids.split(",") if x.strip())
 
-    popular = primary_state.get_movies_by_sort("popularity", 10, exclude)
+    popular = primary_state.get_movies_by_sort("popularity", 10, exclude, language="en")
     with_backdrops = [f for f in popular if f.backdrop_path]
     if not with_backdrops:
         with_backdrops = popular
@@ -324,9 +306,67 @@ async def get_movie(movie_id: int):
     """Get a single movie's details."""
     features = primary_state.get_features(movie_id)
     if not features:
-        from fastapi import HTTPException
         raise HTTPException(404, f"Movie {movie_id} not found")
     return _to_movie_response(features)
+
+
+@app.get("/api/similar/{movie_id}", response_model=SimilarResponse)
+async def get_similar(movie_id: int, limit: int = Query(10, ge=1, le=50)):
+    """Get similar movies using KNN on the movie's embedding vector."""
+    embedding = primary_state.get_embedding(movie_id)
+    if embedding is None:
+        raise HTTPException(404, f"Movie {movie_id} not found")
+
+    results = primary_state.search_knn(
+        query_embedding=embedding,
+        k=limit + 1,  # +1 to exclude the movie itself
+        exclude_ids={movie_id},
+    )
+
+    movies = []
+    for mid, score in results[:limit]:
+        f = primary_state.get_features(mid)
+        if f and (max(f.vote_average, f.imdb_rating) >= 5.0 or f.vote_count < 10):
+            movies.append(_to_movie_response(f, score))
+
+    return SimilarResponse(movies=movies)
+
+
+@app.post("/api/for-you", response_model=ForYouResponse)
+async def get_for_you(request: ForYouRequest):
+    """Personalized recommendations based on liked movie embeddings."""
+    if len(request.liked_ids) < 1:
+        return ForYouResponse(movies=[])
+
+    # Collect embeddings for liked movies
+    embeddings = []
+    for mid in request.liked_ids:
+        emb = primary_state.get_embedding(mid)
+        if emb is not None:
+            embeddings.append(emb)
+
+    if not embeddings:
+        return ForYouResponse(movies=[])
+
+    # Average the embeddings to create a taste vector
+    taste_vector = np.mean(embeddings, axis=0)
+
+    exclude = set(request.exclude_ids) if request.exclude_ids else set()
+    exclude.update(request.liked_ids)
+
+    results = primary_state.search_knn(
+        query_embedding=taste_vector,
+        k=20,
+        exclude_ids=exclude,
+    )
+
+    movies = []
+    for mid, score in results:
+        f = primary_state.get_features(mid)
+        if f and (max(f.vote_average, f.imdb_rating) >= 5.0 or f.vote_count < 10):
+            movies.append(_to_movie_response(f, score))
+
+    return ForYouResponse(movies=movies)
 
 
 def main():
